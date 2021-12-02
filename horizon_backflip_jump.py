@@ -24,13 +24,13 @@ n_v = urdf_awesome_leg.nv()  # number of dofs
 # Setting some of the problem's parameters
 
 T_f = 4.0  # optimization horizon
-T_takeoff = 1.7 # instant of takeoff
-T_touchdown = 2.2 # instant of touchdown
+T_takeoff = 1.7  # instant of takeoff
+T_touchdown = 3.0  # instant of touchdown
 dt = 0.05  # interval length (time)
 n_nodes = round(T_f / dt)
 n_takeoff = round(T_takeoff / dt)  # node index at takeoff
 n_touchdown = round(T_touchdown / dt)  # node index at touchdown
-
+jump_height=0.35
 prb = Problem(n_nodes)  # initialization of a problem object
 
 transcriptor_name = "multiple_shooting"  # other option: "direct_collocation"
@@ -53,7 +53,7 @@ q_init = [0., 0., 0.]
 ###################### DEFINING BOUNDS ########################
 q_p[0].setBounds(-0.4, 0.4)
 
-tau_lim = np.array([0, 50, 50])  # effort limits (test_rig passive joint effort limit)
+tau_lim = np.array([0, 25, 25])  # effort limits (test_rig passive joint effort limit)
 q_p.setBounds(q_init, q_init, 0)  # imposing the initial condition on q_p of the first node ("0")
 q_p_dot.setBounds([0., 0., 0.], [0., 0., 0.], 0)  # zero initial "velocity"
 q_p_ddot = prb.createInputVariable("q_p_ddot", n_v)  # using joint accelerations as an input variable
@@ -84,30 +84,36 @@ fk_foot = cs.Function.deserialize(urdf_awesome_leg.fk("LF_FOOT"))
 v_LF_FOOT = dfk_foot(q=q_p, qdot=q_p_dot)["ee_vel_linear"]  # foot vertical velocity
 p_LF_FOOT = fk_foot(q=q_p)["ee_pos"]  # foot vertical position
 p_LF_FOOT_init = fk_foot(q=q_init)["ee_pos"]  # foot vertical position
+p_LF_FOOT_jump_height_ref = fk_foot(q=[jump_height, 0, 0])["ee_pos"]  # foot reference jump height
 
 tau_cnstrnt = prb.createIntermediateConstraint("dynamics_feas", tau)  # dynamics feasibility constraint
 tau_cnstrnt.setBounds(-tau_lim, tau_lim)  # setting input limits
+
 # prb.createConstraint("hip_height", position_LF_HIP - position_LF_HIP_initial)
 # prb.createConstraint("hip_vel", v_LF_HIP)
 prb.createConstraint("foot_vel_bf_touchdown", v_LF_FOOT,
                      nodes=range(0, n_takeoff + 1))  # no vertical velocity of the foot before touchdown
 prb.createConstraint("foot_vel_aftr_touchdown", v_LF_FOOT,
                      nodes=range(n_touchdown, n_nodes + 1))  # no vertical velocity of the foot after touchdown
-prb.createConstraint("foot_pos_restoration", p_LF_FOOT - p_LF_FOOT_init,
-                     nodes=n_nodes)  # restore foot position at the end of the optimization horizon
 prb.createConstraint("GRF_zero", f_contact,
                      nodes=range(n_takeoff, n_touchdown))  # 0 vertical velocity during flight
+
+prb.createConstraint("foot_pos_jump_height", p_LF_FOOT - p_LF_FOOT_jump_height_ref, nodes=round((n_takeoff + n_touchdown)/2))  # restore foot position at the end of the optimization horizon
+prb.createFinalConstraint("foot_pos_restoration",
+                          p_LF_FOOT - p_LF_FOOT_init)  # restore foot position at the end of the optimization horizon
 prb.createFinalConstraint("final_joint_zero_vel", q_p_dot)  # joints are still at the end of the optimization horizon
 
 ############################# CREATING THE COST FUNCTION ######################################
 
-weight_contact_cost = 1e-2 # minimizing the contact force
+weight_contact_cost = 1e-2  # minimizing the contact force
 weight_postural_cost = 100
 weight_q_ddot = 1e-2
 
 prb.createIntermediateCost("min_f_contact", weight_contact_cost * cs.sumsqr(f_contact))
-prb.createIntermediateCost("min_q_ddot", weight_q_ddot * cs.sumsqr(q_p_ddot)) # minimizing the joint accelerations ("responsiveness" of the trajectory)
-prb.createFinalCost("postural", weight_postural_cost * cs.sumsqr(q_p - q_init)) # penalizing the difference between the initial position and the final one (using it as a constraint does not work)
+prb.createIntermediateCost("min_q_ddot", weight_q_ddot * cs.sumsqr(
+    q_p_ddot))  # minimizing the joint accelerations ("responsiveness" of the trajectory)
+prb.createFinalCost("postural", weight_postural_cost * cs.sumsqr(
+    q_p - q_init))  # penalizing the difference between the initial position and the final one (using it as a constraint does not work)
 
 ########################## SOLVER ##########################
 

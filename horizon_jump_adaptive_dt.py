@@ -53,12 +53,15 @@ q_init = [0., 0., 0.]
 ###################### DEFINING BOUNDS ########################
 q_p[0].setBounds(-0.4, 0.4)
 
-tau_lim = np.array([0, 50, 50])  # effort limits (test_rig passive joint effort limit)
+tau_lim = np.array([0, 1000, 1000])  # effort limits (test_rig passive joint effort limit)
 q_p.setBounds(q_init, q_init, 0)  # imposing the initial condition on q_p of the first node ("0")
 q_p_dot.setBounds([0., 0., 0.], [0., 0., 0.], 0)  # zero initial "velocity"
-q_p_ddot = prb.createInputVariable("q_p_ddot", n_v)  # using joint accelerations as an input variable
-x, xdot = utils.double_integrator(q_p, q_p_dot, q_p_ddot)  # building the full state
 
+####################### DEFINING CONSTRAINTS ###########################
+
+q_p_ddot = prb.createInputVariable("q_p_ddot", n_v)  # using joint accelerations as an input variable
+
+x, xdot = utils.double_integrator(q_p, q_p_dot, q_p_ddot)  # building the full state
 prb.setDynamics(xdot)  # we are interested in the xdot
 prb.setDt(dt)  # setting problem's dt
 
@@ -67,9 +70,9 @@ trscptr = transcriptor.Transcriptor.make_method(transcriptor_name, prb, trans_op
 tau = kin_dyn.InverseDynamics(urdf_awesome_leg, contact_map.keys(),
                               casadi_kin_dyn.py3casadi_kin_dyn.CasadiKinDyn.LOCAL_WORLD_ALIGNED).call(q_p, q_p_dot,
                                                                                                       q_p_ddot,
-                                                                                                      contact_map)  # obtaining the joint efforts
-
-####################### DEFINING BOUNDS/CONSTRAINTS ###########################
+                                                                                                      contact_map)  # obtaining the efforts
+tau_cnstrnt = prb.createIntermediateConstraint("dynamics_feas", tau)  # dynamics feasibility constraint
+tau_cnstrnt.setBounds(-tau_lim, tau_lim)  # setting input limits
 
 fk = cs.Function.deserialize(urdf_awesome_leg.fk("LF_HIP"))  # deserializing
 position_LF_HIP_initial = fk(q=q_init)["ee_pos"]  # initial hip position (numerical)
@@ -85,29 +88,30 @@ v_LF_FOOT = dfk_foot(q=q_p, qdot=q_p_dot)["ee_vel_linear"]  # foot vertical velo
 p_LF_FOOT = fk_foot(q=q_p)["ee_pos"]  # foot vertical position
 p_LF_FOOT_init = fk_foot(q=q_init)["ee_pos"]  # foot vertical position
 
-tau_cnstrnt = prb.createIntermediateConstraint("dynamics_feas", tau)  # dynamics feasibility constraint
-tau_cnstrnt.setBounds(-tau_lim, tau_lim)  # setting input limits
 # prb.createConstraint("hip_height", position_LF_HIP - position_LF_HIP_initial)
 # prb.createConstraint("hip_vel", v_LF_HIP)
 prb.createConstraint("foot_vel_bf_touchdown", v_LF_FOOT,
                      nodes=range(0, n_takeoff + 1))  # no vertical velocity of the foot before touchdown
 prb.createConstraint("foot_vel_aftr_touchdown", v_LF_FOOT,
                      nodes=range(n_touchdown, n_nodes + 1))  # no vertical velocity of the foot after touchdown
+
 prb.createConstraint("foot_pos_restoration", p_LF_FOOT - p_LF_FOOT_init,
-                     nodes=n_nodes)  # restore foot position at the end of the optimization horizon
+                     nodes=n_nodes)  # no vertical velocity of the foot after touchdown
+
 prb.createConstraint("GRF_zero", f_contact,
-                     nodes=range(n_takeoff, n_touchdown))  # 0 vertical velocity during flight
-prb.createFinalConstraint("final_joint_zero_vel", q_p_dot)  # joints are still at the end of the optimization horizon
+                     nodes=range(n_takeoff, n_touchdown))  # no vertical velocity of the foot after touchdown
+
+prb.createFinalConstraint("final_joint_zero_vel", q_p_dot)  # no vertical velocity of the foot after touchdown
 
 ############################# CREATING THE COST FUNCTION ######################################
-
-weight_contact_cost = 1e-2 # minimizing the contact force
+weight_contact_cost = 1e-2
 weight_postural_cost = 100
 weight_q_ddot = 1e-2
 
 prb.createIntermediateCost("min_f_contact", weight_contact_cost * cs.sumsqr(f_contact))
-prb.createIntermediateCost("min_q_ddot", weight_q_ddot * cs.sumsqr(q_p_ddot)) # minimizing the joint accelerations ("responsiveness" of the trajectory)
-prb.createFinalCost("postural", weight_postural_cost * cs.sumsqr(q_p - q_init)) # penalizing the difference between the initial position and the final one (using it as a constraint does not work)
+prb.createIntermediateCost("min_q_ddot", weight_q_ddot * cs.sumsqr(q_p_ddot))
+
+prb.createFinalCost("postural", weight_postural_cost * cs.sumsqr(q_p - q_init))
 
 ########################## SOLVER ##########################
 
