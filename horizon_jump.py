@@ -104,10 +104,13 @@ prb.createFinalConstraint("final_joint_zero_vel", q_p_dot)  # joints are still a
 weight_contact_cost = 1e-2 # minimizing the contact force
 weight_postural_cost = 100
 weight_q_ddot = 1e-2
+weight_hip_height_jump= 100
 
 prb.createIntermediateCost("min_f_contact", weight_contact_cost * cs.sumsqr(f_contact))
 prb.createIntermediateCost("min_q_ddot", weight_q_ddot * cs.sumsqr(q_p_ddot)) # minimizing the joint accelerations ("responsiveness" of the trajectory)
 prb.createFinalCost("postural", weight_postural_cost * cs.sumsqr(q_p - q_init)) # penalizing the difference between the initial position and the final one (using it as a constraint does not work)
+prb.createIntermediateCost("max_hip_height_jump", weight_hip_height_jump * cs.sumsqr(1/(position_LF_HIP[2])),
+                           nodes=range(n_takeoff, n_touchdown))
 
 ########################## SOLVER ##########################
 

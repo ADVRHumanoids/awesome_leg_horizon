@@ -53,8 +53,8 @@ tau_lim = np.array([0, 1000, 1000])  # effort limits (test_rig passive joint eff
 q_p.setBounds(q_init, q_init, 0)  # imposing the initial condition on q_p of the first node ("0")
 q_p_dot.setBounds([0., 0., 0.], [0., 0., 0.], 0)  # zero initial "velocity"
 q_p_ddot = prb.createInputVariable("q_p_ddot", n_v)  # using joint accelerations as an input variable
-dt = prb.createInputVariable("dt", 1)  # using dt as an additional input
-dt.setBounds(0.01, 0.1)  # bounds on dt
+dt = prb.createSingleVariable("dt", 1)  # using dt as an additional input
+dt.setBounds(0.02, 0.1)  # bounds on dt
 
 x, xdot = utils.double_integrator(q_p, q_p_dot, q_p_ddot)  # building the full state
 

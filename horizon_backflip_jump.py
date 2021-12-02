@@ -25,12 +25,12 @@ n_v = urdf_awesome_leg.nv()  # number of dofs
 
 T_f = 4.0  # optimization horizon
 T_takeoff = 1.7  # instant of takeoff
-T_touchdown = 3.0  # instant of touchdown
+T_touchdown = 2.2  # instant of touchdown
 dt = 0.05  # interval length (time)
 n_nodes = round(T_f / dt)
 n_takeoff = round(T_takeoff / dt)  # node index at takeoff
 n_touchdown = round(T_touchdown / dt)  # node index at touchdown
-jump_height=0.35
+jump_height = 1.2
 prb = Problem(n_nodes)  # initialization of a problem object
 
 transcriptor_name = "multiple_shooting"  # other option: "direct_collocation"
@@ -49,7 +49,7 @@ contact_map = dict(LF_FOOT=f_contact)  # creating a contact map for applying the
 
 # initial joint config (ideally it would be given from measurements)
 q_init = [0., 0., 0.]
-
+q_backflip = [0., np.pi, np.pi]
 ###################### DEFINING BOUNDS ########################
 q_p[0].setBounds(-0.4, 0.4)
 
@@ -106,14 +106,17 @@ prb.createFinalConstraint("final_joint_zero_vel", q_p_dot)  # joints are still a
 ############################# CREATING THE COST FUNCTION ######################################
 
 weight_contact_cost = 1e-2  # minimizing the contact force
-weight_postural_cost = 100
-weight_q_ddot = 1e-2
+weight_postural_cost = 200
+weight_q_ddot = 10
+weight_hip_height_jump = 100
 
 prb.createIntermediateCost("min_f_contact", weight_contact_cost * cs.sumsqr(f_contact))
 prb.createIntermediateCost("min_q_ddot", weight_q_ddot * cs.sumsqr(
     q_p_ddot))  # minimizing the joint accelerations ("responsiveness" of the trajectory)
 prb.createFinalCost("postural", weight_postural_cost * cs.sumsqr(
     q_p - q_init))  # penalizing the difference between the initial position and the final one (using it as a constraint does not work)
+prb.createIntermediateCost("max_hip_height_jump", weight_hip_height_jump * cs.sumsqr(1 / (position_LF_HIP[2])),
+                           nodes=range(n_takeoff, n_touchdown))
 
 ########################## SOLVER ##########################
 
