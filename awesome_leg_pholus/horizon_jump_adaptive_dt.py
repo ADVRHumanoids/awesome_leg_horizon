@@ -53,6 +53,7 @@ tau_lim = np.array([0, 50, 50])  # effort limits (test_rig passive joint effort 
 q_p.setBounds(q_init, q_init, 0)  # imposing the initial condition on q_p of the first node ("0")
 q_p_dot.setBounds([0., 0., 0.], [0., 0., 0.], 0)  # zero initial "velocity"
 q_p_ddot = prb.createInputVariable("q_p_ddot", n_v)  # using joint accelerations as an input variable
+q_p_ddot_prev = q_p_ddot.getVarOffset(-1)  # previous input variable
 dt = prb.createInputVariable("dt", 1)  # using dt as an additional input
 dt.setBounds(0.01, 0.1)  # bounds on dt
 
@@ -104,6 +105,7 @@ weight_contact_cost = 1e-2  # minimizing the contact force
 weight_postural_cost = 1000
 weight_q_ddot = 0.1
 weight_hip_height_jump = 100
+weight_input_regularization = 0.00000001
 
 prb.createIntermediateCost("min_f_contact", weight_contact_cost * cs.sumsqr(f_contact))
 prb.createIntermediateCost("min_q_ddot", weight_q_ddot * cs.sumsqr(
@@ -113,7 +115,8 @@ prb.createFinalCost("postural", weight_postural_cost * cs.sumsqr(
 
 prb.createIntermediateCost("max_hip_height_jump", weight_hip_height_jump * cs.sumsqr(1 / (position_LF_HIP[2])),
                            nodes=range(n_takeoff, n_touchdown))
-
+prb.createIntermediateCost("input_regularization", weight_input_regularization * cs.sumsqr(q_p_ddot - q_p_ddot_prev),
+                           nodes=range(n_takeoff, n_touchdown))
 ########################## SOLVER ##########################
 
 slvr_opt = {"ipopt.tol": 1e-4, "ipopt.max_iter": 1000, "ipopt.linear_solver": "ma57"}
@@ -156,7 +159,7 @@ p_res, v_res, a_res, frame_res_force_mapping, tau_res = resampler_trajectory.res
                                                                                               urdf_awesome_leg,
                                                                                               casadi_kin_dyn.py3casadi_kin_dyn.CasadiKinDyn.LOCAL_WORLD_ALIGNED)
 
-rpl_traj = replay_trajectory(dt_res, joint_names, p_res)  # replaying the (resampled) trajectory
+# rpl_traj = replay_trajectory(dt_res, joint_names, p_res)  # replaying the (resampled) trajectory
 
 time_vector = np.zeros([n_nodes + 1])
 time_vector_res = np.zeros([p_res.shape[1]])
@@ -171,60 +174,58 @@ p_hip_res = fk(q=p_res)["ee_pos"]  # hip position
 
 print(len(frame_res_force_mapping["tip"][0, :]))
 
-########################## MANUAL PLOTS ##########################
+########################## RESAMPLED PLOTS ##########################
 
-# pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][0, :], label="GRF_x")
-# pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][1, :], label="GRF_y")
-# pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][2, :], label="GRF_z")
-# pyplt.legend(loc="upper left")
-# pyplt.title("Ground reaction forces", fontdict=None, loc='center')
-#
-# pyplt.figure()
-# pyplt.plot(time_vector_res[:-1], p_res[0, :-1], label="q1")
-# pyplt.plot(time_vector_res[:-1], p_res[1, :-1], label="q2")
-# pyplt.plot(time_vector_res[:-1], p_res[2, :-1], label="q3")
-# pyplt.legend(loc="upper left")
-# pyplt.title("Joint states", fontdict=None, loc='center')
-#
-# pyplt.figure()
-# pyplt.plot(time_vector_res[:-1], tau_res[1, :], label="hip_actuation")
-# pyplt.plot(time_vector_res[:-1], tau_res[2, :], label="knee_actuation")
-# pyplt.legend(loc="upper left")
-# pyplt.title("Joint efforts", fontdict=None, loc='center')
-#
-# pyplt.figure()
-# pyplt.plot(time_vector_res[:-1], np.transpose(p_tip_res[2, :-1]), label="foot tip height")
-# pyplt.plot(time_vector_res[:-1], np.transpose(p_hip_res[2, :-1]), label="hip height")
-# pyplt.legend(loc="upper left")
-#
-
-########################## non-resampled PLOTS ##########################
-
-solution_p_LF_FOOT = fk_foot(q=solution_q_p)["ee_pos"]  # foot vertical position
-solution_position_LF_HIP = fk(q=solution_q_p)["ee_pos"]  # hip position
-
-pyplt.plot(time_vector[1:-1], solution_GRF[0, :-1], label="GRF_x")
-pyplt.plot(time_vector[1:-1], solution_GRF[1, :-1], label="GRF_y")
-pyplt.plot(time_vector[1:-1], solution_GRF[2, :-1], label="GRF_z")
+pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][0, :], label="GRF_x")
+pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][1, :], label="GRF_y")
+pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][2, :], label="GRF_z")
 pyplt.legend(loc="upper left")
 pyplt.title("Ground reaction forces", fontdict=None, loc='center')
 
 pyplt.figure()
-pyplt.plot(time_vector[:-1], solution["q_p"][0, :-1], label="q_p1")
-pyplt.plot(time_vector[:-1], solution["q_p"][1, :-1], label="q_p2")
-pyplt.plot(time_vector[:-1], solution["q_p"][2, :-1], label="q_p3")
+pyplt.plot(time_vector_res[:-1], p_res[0, :-1], label="q1")
+pyplt.plot(time_vector_res[:-1], p_res[1, :-1], label="q2")
+pyplt.plot(time_vector_res[:-1], p_res[2, :-1], label="q3")
 pyplt.legend(loc="upper left")
 pyplt.title("Joint states", fontdict=None, loc='center')
 
 pyplt.figure()
-pyplt.plot(time_vector[:-1], cnstr_opt["dynamics_feas"][1, :], label="hip_actuation")
-pyplt.plot(time_vector[:-1], cnstr_opt["dynamics_feas"][2, :], label="knee_actuation")
+pyplt.plot(time_vector_res[:-1], tau_res[1, :], label="hip_actuation")
+pyplt.plot(time_vector_res[:-1], tau_res[2, :], label="knee_actuation")
 pyplt.legend(loc="upper left")
 pyplt.title("Joint efforts", fontdict=None, loc='center')
 
 pyplt.figure()
-pyplt.plot(time_vector[:-1], np.transpose(solution_p_LF_FOOT[2, :-1]), label="foot tip height")
-pyplt.plot(time_vector[:-1], np.transpose(solution_position_LF_HIP[2, :-1]), label="hip height")
+pyplt.plot(time_vector_res[:-1], np.transpose(p_tip_res[2, :-1]), label="foot tip height")
+pyplt.plot(time_vector_res[:-1], np.transpose(p_hip_res[2, :-1]), label="hip height")
 pyplt.legend(loc="upper left")
-pyplt.show()
 
+########################## non-resampled PLOTS ##########################
+
+# solution_p_LF_FOOT = fk_foot(q=solution_q_p)["ee_pos"]  # foot vertical position
+# solution_position_LF_HIP = fk(q=solution_q_p)["ee_pos"]  # hip position
+#
+# pyplt.plot(time_vector[:-1], solution_GRF[0, :], label="GRF_x")
+# pyplt.plot(time_vector[:-1], solution_GRF[1, :], label="GRF_y")
+# pyplt.plot(time_vector[:-1], solution_GRF[2, :], label="GRF_z")
+# pyplt.legend(loc="upper left")
+# pyplt.title("Ground reaction forces", fontdict=None, loc='center')
+#
+# pyplt.figure()
+# pyplt.plot(time_vector[:-1], solution["q_p"][0, :-1], label="q_p1")
+# pyplt.plot(time_vector[:-1], solution["q_p"][1, :-1], label="q_p2")
+# pyplt.plot(time_vector[:-1], solution["q_p"][2, :-1], label="q_p3")
+# pyplt.legend(loc="upper left")
+# pyplt.title("Joint states", fontdict=None, loc='center')
+#
+# pyplt.figure()
+# pyplt.plot(time_vector[:-1], cnstr_opt["dynamics_feas"][1, :], label="hip_actuation")
+# pyplt.plot(time_vector[:-1], cnstr_opt["dynamics_feas"][2, :], label="knee_actuation")
+# pyplt.legend(loc="upper left")
+# pyplt.title("Joint efforts", fontdict=None, loc='center')
+#
+# pyplt.figure()
+# pyplt.plot(time_vector[:-1], np.transpose(solution_p_LF_FOOT[2, :-1]), label="foot tip height")
+# pyplt.plot(time_vector[:-1], np.transpose(solution_position_LF_HIP[2, :-1]), label="hip height")
+# pyplt.legend(loc="upper left")
+pyplt.show()

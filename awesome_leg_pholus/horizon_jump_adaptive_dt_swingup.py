@@ -174,7 +174,6 @@ pyplt.plot(time_vector[1:], solution_GRF[2])
 pyplt.figure()
 pyplt.plot(time_vector, np.squeeze(np.asarray(solution_p_LF_FOOT[2, :].toarray())))
 
-########################## MANUAL PLOTS ##########################
 
 pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][0, :], label="GRF_x")
 pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][1, :], label="GRF_y")
@@ -195,10 +194,10 @@ pyplt.plot(time_vector_res[:-1], tau_res[2, :], label="knee_actuation")
 pyplt.legend(loc="upper left")
 pyplt.title("Joint efforts", fontdict=None, loc='center')
 
-print(solution_p_LF_FOOT)
 pyplt.figure()
 pyplt.plot(time_vector_res[:-1], np.transpose(p_tip_res[2, :-1]), label="foot tip height")
 pyplt.plot(time_vector_res[:-1], np.transpose(p_hip_res[2, :-1]), label="hip height")
 pyplt.legend(loc="upper left")
 pyplt.show()
+
 
