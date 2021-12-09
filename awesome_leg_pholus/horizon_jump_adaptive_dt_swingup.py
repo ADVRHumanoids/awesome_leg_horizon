@@ -1,7 +1,7 @@
-###################### IMPORTS ########################
+##################### IMPORTS ########################
 
 from horizon.problem import Problem
-from horizon.utils import kin_dyn, utils
+from horizon.utils import kin_dyn, utils, resampler_trajectory
 import casadi_kin_dyn
 from horizon.transcriptions import transcriptor
 import numpy as np
@@ -23,13 +23,9 @@ n_v = urdf_awesome_leg.nv()  # number of dofs
 
 # Setting some of the problem's parameters
 
-T_f = 4.5  # optimization horizon
-T_takeoff = 3.0  # instant of takeoff
-T_touchdown = 3.5  # instant of touchdown
-dt = 0.05  # interval length (time)
-n_nodes = round(T_f / dt)
-n_takeoff = round(T_takeoff / dt)  # node index at takeoff
-n_touchdown = round(T_touchdown / dt)  # node index at touchdown
+n_nodes = 100
+n_takeoff = 40  # node index at takeoff
+n_touchdown = 80  # node index at touchdown
 
 prb = Problem(n_nodes)  # initialization of a problem object
 
@@ -57,6 +53,9 @@ tau_lim = np.array([0, 50, 50])  # effort limits (test_rig passive joint effort 
 q_p.setBounds(q_init, q_init, 0)  # imposing the initial condition on q_p of the first node ("0")
 q_p_dot.setBounds([0., 0., 0.], [0., 0., 0.], 0)  # zero initial "velocity"
 q_p_ddot = prb.createInputVariable("q_p_ddot", n_v)  # using joint accelerations as an input variable
+dt = prb.createInputVariable("dt", 1)  # using dt as an additional input
+dt.setBounds(0.01, 0.1)  # bounds on dt
+
 x, xdot = utils.double_integrator(q_p, q_p_dot, q_p_ddot)  # building the full state
 
 prb.setDynamics(xdot)  # we are interested in the xdot
@@ -103,20 +102,21 @@ prb.createFinalConstraint("final_joint_zero_vel", q_p_dot)  # joints are still a
 
 weight_contact_cost = 1e-2  # minimizing the contact force
 weight_postural_cost = 1000
-weight_q_ddot = 0.2
-weight_hip_height_jump = 100
+weight_q_ddot = 0.5
+weight_hip_height_jump = 200
 
 prb.createIntermediateCost("min_f_contact", weight_contact_cost * cs.sumsqr(f_contact))
 prb.createIntermediateCost("min_q_ddot", weight_q_ddot * cs.sumsqr(
     q_p_ddot))  # minimizing the joint accelerations ("responsiveness" of the trajectory)
 prb.createFinalCost("postural", weight_postural_cost * cs.sumsqr(
     q_p - q_init))  # penalizing the difference between the initial position and the final one (using it as a constraint does not work)
-prb.createIntermediateCost("max_hip_height_jump", weight_hip_height_jump * cs.sumsqr(1 / (position_LF_HIP[2])),
+
+prb.createIntermediateCost("max_hip_height_jump", weight_hip_height_jump * cs.sumsqr(1/(position_LF_HIP[2])),
                            nodes=range(n_takeoff, n_touchdown))
 
 ########################## SOLVER ##########################
 
-slvr_opt = {"ipopt.tol": 1e-4, "ipopt.max_iter": 1000, "ipopt.linear_solver": "ma57"}
+slvr_opt = {"ipopt.tol": 1e-4, "ipopt.max_iter": 1000, "ipopt.linear_solver":"ma57"}
 slvr = solver.Solver.make_solver("ipopt", prb, slvr_opt)
 
 slvr.solve()  # solving
@@ -126,49 +126,79 @@ dt_opt = slvr.getDt()
 joint_names = urdf_awesome_leg.joint_names()
 joint_names.remove("universe")  # removing the "universe joint"
 
-########################## POST-PROCESSING ##########################
-
-rpl_traj = replay_trajectory(dt, joint_names,
-                             solution["q_p"])  # replaying the trajectory and the forces on (it publishes on ROS topics)
-
 cnstr_opt = slvr.getConstraintSolutionDict()
+
+# plt = PlotterHorizon(prb, solution)
+# plt.plotVariables()
+# plt.plotFunctions()
 
 solution_GRF = solution["f_contact"]
 solution_q_p = solution["q_p"]
 solution_p_LF_FOOT = fk_foot(q=solution_q_p)["ee_pos"]  # foot vertical position
-solution_position_LF_HIP = fk(q=solution_q_p)["ee_pos"]  # hip position
+
+################### RESAMPLING (necessary because dt is variable) #####################à
+q_sym = cs.SX.sym('q', n_q)
+q_dot_sym = cs.SX.sym('q_dot', n_v)
+q_ddot_sym = cs.SX.sym('q_ddot', n_v)
+x, x_dot = utils.double_integrator(q_sym, q_dot_sym, q_ddot_sym)
+
+dae = {'x': x, 'p': q_ddot_sym, 'ode': x_dot, 'quad': 1}
+
+dt_res = 0.0001
+sol_contact_map = dict(tip=solution["f_contact"])  # creating a contact map for applying the input to the foot
+
+p_res, v_res, a_res, frame_res_force_mapping, tau_res = resampler_trajectory.resample_torques(solution["q_p"],
+                                                                                              solution["q_p_dot"],
+                                                                                              solution["q_p_ddot"],
+                                                                                              solution["dt"].flatten(),
+                                                                                              dt_res,
+                                                                                              dae, sol_contact_map,
+                                                                                              urdf_awesome_leg,
+                                                                                              casadi_kin_dyn.py3casadi_kin_dyn.CasadiKinDyn.LOCAL_WORLD_ALIGNED)
+
+rpl_traj = replay_trajectory(dt_res, joint_names, p_res)  # replaying the (resampled) trajectory
+
+rpl_traj.sleep(1.0)
+rpl_traj.replay(is_floating_base=False)
+
 
 time_vector = np.zeros([n_nodes + 1])
-for i in range(1, n_nodes):
-    time_vector[i] = time_vector[i - 1] + dt
+time_vector_res = np.zeros([p_res.shape[1]])
+
+for i in range(1, solution["dt"].shape[1]):
+    time_vector[i] = time_vector[i - 1] + solution["dt"][:, i - 1]
+for i in range(1, p_res.shape[1] - 1):
+    time_vector_res[i] = time_vector_res[i - 1] + dt_res
+
+pyplt.plot(time_vector[1:], solution_GRF[2])
+pyplt.figure()
+pyplt.plot(time_vector, np.squeeze(np.asarray(solution_p_LF_FOOT[2, :].toarray())))
 
 ########################## MANUAL PLOTS ##########################
 
-pyplt.plot(time_vector[1:-1], solution_GRF[0, :-1], label="GRF_x")
-pyplt.plot(time_vector[1:-1], solution_GRF[1, :-1], label="GRF_y")
-pyplt.plot(time_vector[1:-1], solution_GRF[2, :-1], label="GRF_z")
+pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][0, :], label="GRF_x")
+pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][1, :], label="GRF_y")
+pyplt.plot(time_vector_res[:-1], frame_res_force_mapping["tip"][2, :], label="GRF_z")
 pyplt.legend(loc="upper left")
 pyplt.title("Ground reaction forces", fontdict=None, loc='center')
 
 pyplt.figure()
-pyplt.plot(time_vector[:-1], solution["q_p"][0, :-1], label="q_p1")
-pyplt.plot(time_vector[:-1], solution["q_p"][1, :-1], label="q_p2")
-pyplt.plot(time_vector[:-1], solution["q_p"][2, :-1], label="q_p3")
+pyplt.plot(time_vector_res[:-1], p_res[0, :-1], label="q1")
+pyplt.plot(time_vector_res[:-1], p_res[1, :-1], label="q2")
+pyplt.plot(time_vector_res[:-1], p_res[2, :-1], label="q3")
 pyplt.legend(loc="upper left")
 pyplt.title("Joint states", fontdict=None, loc='center')
 
 pyplt.figure()
-pyplt.plot(time_vector[:-1], cnstr_opt["dynamics_feas"][1, :], label="hip_actuation")
-pyplt.plot(time_vector[:-1], cnstr_opt["dynamics_feas"][2, :], label="knee_actuation")
+pyplt.plot(time_vector_res[:-1], tau_res[1, :], label="hip_actuation")
+pyplt.plot(time_vector_res[:-1], tau_res[2, :], label="knee_actuation")
 pyplt.legend(loc="upper left")
 pyplt.title("Joint efforts", fontdict=None, loc='center')
 
 print(solution_p_LF_FOOT)
 pyplt.figure()
-pyplt.plot(time_vector[:-1], np.transpose(solution_p_LF_FOOT[2, :-1]), label="foot tip height")
-pyplt.plot(time_vector[:-1], np.transpose(solution_position_LF_HIP[2, :-1]), label="hip height")
+pyplt.plot(time_vector_res[:-1], np.transpose(p_tip_res[2, :-1]), label="foot tip height")
+pyplt.plot(time_vector_res[:-1], np.transpose(p_hip_res[2, :-1]), label="hip height")
 pyplt.legend(loc="upper left")
 pyplt.show()
 
-rpl_traj.sleep(1.0)
-rpl_traj.replay(is_floating_base=False)
