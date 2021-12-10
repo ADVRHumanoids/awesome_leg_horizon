@@ -198,6 +198,12 @@ pyplt.figure()
 pyplt.plot(time_vector_res[:-1], np.transpose(p_tip_res[2, :-1]), label="foot tip height")
 pyplt.plot(time_vector_res[:-1], np.transpose(p_hip_res[2, :-1]), label="hip height")
 pyplt.legend(loc="upper left")
+
+pyplt.figure()
+pyplt.plot(solution["dt"].flatten(), label="dt")
+pyplt.legend(loc="upper left")
+pyplt.title("Optimized dt", fontdict=None, loc='center')
+
 pyplt.show()
 
 

@@ -96,7 +96,7 @@ prb.createConstraint("foot_vel_aftr_touchdown", v_LF_FOOT,
 prb.createConstraint("foot_pos_restoration", p_LF_FOOT - p_LF_FOOT_init,
                      nodes=n_nodes)  # restore foot position at the end of the optimization horizon
 prb.createConstraint("GRF_zero", f_contact,
-                     nodes=range(n_takeoff, n_touchdown))  # 0 vertical velocity during flight
+                     nodes=range(n_takeoff, n_touchdown))  # 0 vertical GRF during flight
 prb.createFinalConstraint("final_joint_zero_vel", q_p_dot)  # joints are still at the end of the optimization horizon
 
 ############################# CREATING THE COST FUNCTION ######################################
@@ -199,6 +199,11 @@ pyplt.figure()
 pyplt.plot(time_vector_res[:-1], np.transpose(p_tip_res[2, :-1]), label="foot tip height")
 pyplt.plot(time_vector_res[:-1], np.transpose(p_hip_res[2, :-1]), label="hip height")
 pyplt.legend(loc="upper left")
+
+pyplt.figure()
+pyplt.plot(solution["dt"].flatten(), label="dt")
+pyplt.legend(loc="upper left")
+pyplt.title("Optimized dt", fontdict=None, loc='center')
 
 ########################## non-resampled PLOTS ##########################
 
